@@ -3,7 +3,7 @@ export const UI_CONSTANTS = {
   PROGRESS_UPDATE_INTERVAL: 500, // 500ms
   BUTTON_SELECTOR: '.Box-header .d-flex',
   BUTTON_ID: 'github-dir-download-btn',
-  BUTTON_CLASS: 'btn btn-sm btn-outline',
+  BUTTON_CLASS: 'github-dir-download-btn',
 } as const;
 
 export const MESSAGES = {

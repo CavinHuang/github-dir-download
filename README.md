@@ -2,14 +2,14 @@
 
 <div align="center">
   <img src="public/icon-with-shadow.svg" alt="GitHub Dir Download" width="120" height="120">
-  
+
   <h3>一键从GitHub仓库下载指定文件夹</h3>
   <p>支持Chrome和Firefox的现代化浏览器插件</p>
-  
+
   [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
   [![Chrome Web Store](https://img.shields.io/badge/Chrome-Web%20Store-green.svg)](https://chrome.google.com/webstore)
   [![Firefox Add-ons](https://img.shields.io/badge/Firefox-Add--ons-orange.svg)](https://addons.mozilla.org/firefox)
-  
+
 </div>
 
 ---
@@ -94,7 +94,7 @@
 
 #### 下载限制配置
 - **单文件大小限制** - 默认50MB，可调整1-1024MB
-- **总下载大小限制** - 默认1GB，可调整1-10GB  
+- **总下载大小限制** - 默认1GB，可调整1-10GB
 - **最大文件数量** - 默认1000个，可调整1-10000个
 - **并发下载数** - 默认3个，可调整1-20个
 
@@ -124,6 +124,31 @@ temp/*         # 排除temp目录下所有文件
 - **样式系统** - CSS + GitHub Design System
 - **浏览器API** - WebExtension Polyfill
 - **文件处理** - JSZip
+
+### 调试指南
+
+#### 查看 Background 脚本日志
+1. 打开 `chrome://extensions/`
+2. 启用"开发者模式"
+3. 找到扩展，点击"检查视图" → "Service Worker"
+4. 在打开的控制台中查看所有 background 脚本的日志
+
+#### 常见问题排查
+
+**扩展上下文失效错误 (Extension context invalidated)**
+- **原因**: 扩展重新加载、热更新或 Service Worker 重启
+- **症状**: 控制台显示 "Extension context invalidated" 错误
+- **解决方案**:
+  1. 刷新 GitHub 页面
+  2. 重新加载扩展程序
+  3. 检查扩展是否正确安装
+
+**Service Worker 不活跃**
+- **解决方案**: 在扩展管理页面点击"重新加载"按钮
+
+**日志没有显示**
+- **检查**: Service Worker 是否启动
+- **解决方案**: 触发一次扩展操作（如点击图标）来激活 Service Worker
 
 ### 项目结构
 ```
@@ -299,4 +324,4 @@ pnpm build
 <div align="center">
   <p>如果这个项目对您有帮助，请给我们一个⭐️</p>
   <p>Made with ❤️ by GitHub Dir Download Team</p>
-</div> 
+</div>

@@ -14,7 +14,18 @@ export class ErrorHandler {
 
   static handle(error: Error, context: string): AppError {
     console.error(`[${context}] Error:`, error);
-    
+
+    // 检查扩展上下文失效错误
+    if (error.message.includes('Extension context invalidated') ||
+        error.message.includes('message port closed') ||
+        error.message.includes('runtime.lastError')) {
+      return this.createError(
+        ErrorType.EXTENSION_ERROR,
+        '扩展上下文失效，请刷新页面后重试',
+        { originalError: error.message, needsPageRefresh: true }
+      );
+    }
+
     if (error.message.includes('rate limit')) {
       return this.createError(
         ErrorType.API_RATE_LIMIT,
@@ -22,7 +33,7 @@ export class ErrorHandler {
         { originalError: error.message }
       );
     }
-    
+
     if (error.message.includes('401') || error.message.includes('Unauthorized')) {
       return this.createError(
         ErrorType.INVALID_TOKEN,
@@ -30,7 +41,7 @@ export class ErrorHandler {
         { originalError: error.message }
       );
     }
-    
+
     if (error.message.includes('404') || error.message.includes('Not Found')) {
       return this.createError(
         ErrorType.INVALID_REPO,
@@ -38,7 +49,7 @@ export class ErrorHandler {
         { originalError: error.message }
       );
     }
-    
+
     if (error.name === 'NetworkError' || error.message.includes('fetch')) {
       return this.createError(
         ErrorType.NETWORK_ERROR,
@@ -46,7 +57,7 @@ export class ErrorHandler {
         { originalError: error.message }
       );
     }
-    
+
     return this.createError(
       ErrorType.DOWNLOAD_FAILED,
       error.message || '未知错误',
@@ -75,4 +86,4 @@ export class ErrorHandler {
   static getUserMessage(error: AppError): string {
     return error.message;
   }
-} 
+}

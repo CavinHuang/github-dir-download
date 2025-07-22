@@ -1,7 +1,9 @@
 import { writable, derived } from 'svelte/store';
+import browser from 'webextension-polyfill';
 import type { RepoInfo } from '../types/github.js';
-import type { DownloadProgress, DownloadStatus } from '../types/download.js';
+import type { DownloadProgress, DownloadOptions } from '../types/download.js';
 import type { DownloadRecord } from '../types/storage.js';
+import type { QueueItem } from '../services/download/DownloadQueue.js';
 import { SettingsManager } from '../services/storage/SettingsManager.js';
 
 export interface DownloadState {
@@ -9,7 +11,8 @@ export interface DownloadState {
   progress: DownloadProgress | null;
   currentRepo: RepoInfo | null;
   downloadHistory: DownloadRecord[];
-  queuedDownloads: RepoInfo[];
+  queue: QueueItem[];
+  currentDownload: QueueItem | null;
   error: string | null;
 }
 
@@ -18,7 +21,8 @@ const initialState: DownloadState = {
   progress: null,
   currentRepo: null,
   downloadHistory: [],
-  queuedDownloads: [],
+  queue: [],
+  currentDownload: null,
   error: null
 };
 
@@ -47,146 +51,88 @@ export const download = {
   },
 
   // 开始下载
-  startDownload(repoInfo: RepoInfo): void {
-    downloadStore.update(state => ({
-      ...state,
-      isDownloading: true,
-      currentRepo: repoInfo,
-      progress: {
-        totalFiles: 0,
-        downloadedFiles: 0,
-        totalSize: 0,
-        downloadedSize: 0,
-        currentFile: '',
-        percentage: 0,
-        status: 'preparing',
-        startTime: Date.now()
-      },
-      error: null
-    }));
-  },
-
-  // 更新下载进度
-  updateProgress(progress: Partial<DownloadProgress>): void {
-    downloadStore.update(state => {
-      if (!state.progress) return state;
-      
-      const newProgress = { ...state.progress, ...progress };
-      
-      // 计算百分比
-      if (newProgress.totalFiles > 0) {
-        newProgress.percentage = Math.round(
-          (newProgress.downloadedFiles / newProgress.totalFiles) * 100
-        );
-      }
-      
-      // 计算速度和剩余时间
-      const elapsed = Date.now() - newProgress.startTime;
-      if (elapsed > 0 && newProgress.downloadedSize > 0) {
-        newProgress.speed = newProgress.downloadedSize / (elapsed / 1000);
-        
-        if (newProgress.speed > 0) {
-          const remainingBytes = newProgress.totalSize - newProgress.downloadedSize;
-          newProgress.estimatedTimeRemaining = remainingBytes / newProgress.speed;
-        }
-      }
-
-      return {
-        ...state,
-        progress: newProgress
-      };
-    });
-  },
-
-  // 完成下载
-  async completeDownload(success: boolean, error?: string): Promise<void> {
+  async startDownload(repoInfo: RepoInfo, options?: Partial<DownloadOptions>): Promise<void> {
     try {
-      let currentState: DownloadState;
-      const unsubscribe = downloadStore.subscribe(state => {
-        currentState = state;
+      const response = await browser.runtime.sendMessage({
+        type: 'START_DOWNLOAD',
+        repoInfo,
+        options
       });
-      unsubscribe();
 
-      if (currentState!.currentRepo && currentState!.progress) {
-        // 创建下载记录
-        const record: DownloadRecord = {
-          id: crypto.randomUUID(),
-          repoInfo: currentState!.currentRepo,
-          timestamp: Date.now(),
-          status: success ? 'completed' : 'failed',
-          fileCount: currentState!.progress.downloadedFiles,
-          totalSize: currentState!.progress.downloadedSize,
-          duration: Date.now() - currentState!.progress.startTime,
-          error: error
-        };
-
-        // 保存到历史记录
-        await settingsManager.addDownloadRecord(record);
-        
-        // 更新store状态
+      if (response && response.success) {
         downloadStore.update(state => ({
           ...state,
-          isDownloading: false,
-          progress: success ? {
-            ...state.progress!,
-            status: 'completed',
-            percentage: 100
-          } : {
-            ...state.progress!,
-            status: 'error'
-          },
-          downloadHistory: [record, ...state.downloadHistory],
-          error: error || null
+          isDownloading: true,
+          currentRepo: repoInfo,
+          error: null
         }));
+        
+        // 刷新队列状态
+        this.refreshQueue();
       } else {
-        // 如果没有当前下载信息，只更新状态
+        throw new Error(response?.error || '启动下载失败');
+      }
+    } catch (error) {
+      downloadStore.update(state => ({
+        ...state,
+        error: (error as Error).message
+      }));
+      throw error;
+    }
+  },
+
+
+
+
+  // 刷新下载队列
+  async refreshQueue(): Promise<void> {
+    try {
+      const response = await browser.runtime.sendMessage({ type: 'GET_DOWNLOAD_QUEUE' });
+      if (response && response.success) {
+        const currentDownload = response.queue.find((item: QueueItem) => item.status === 'downloading');
+        const isDownloading = !!currentDownload;
+        
         downloadStore.update(state => ({
           ...state,
-          isDownloading: false,
-          error: error || null
+          queue: response.queue,
+          currentDownload,
+          isDownloading,
+          progress: currentDownload?.progress || null
         }));
       }
     } catch (error) {
-      console.error('完成下载处理失败:', error);
-      downloadStore.update(state => ({
-        ...state,
-        isDownloading: false,
-        error: '保存下载记录失败'
-      }));
+      console.error('刷新下载队列失败:', error);
     }
   },
 
   // 取消下载
-  cancelDownload(): void {
-    downloadStore.update(state => ({
-      ...state,
-      isDownloading: false,
-      progress: state.progress ? {
-        ...state.progress,
-        status: 'cancelled'
-      } : null,
-      error: null
-    }));
+  async cancelDownload(itemId: string): Promise<void> {
+    try {
+      await browser.runtime.sendMessage({ type: 'CANCEL_DOWNLOAD', itemId });
+      this.refreshQueue();
+    } catch (error) {
+      console.error('取消下载失败:', error);
+    }
   },
 
-  // 添加到下载队列
-  addToQueue(repoInfo: RepoInfo): void {
-    downloadStore.update(state => ({
-      ...state,
-      queuedDownloads: [...state.queuedDownloads, repoInfo]
-    }));
+  // 重试下载
+  async retryDownload(itemId: string): Promise<void> {
+    try {
+      await browser.runtime.sendMessage({ type: 'RETRY_DOWNLOAD', itemId });
+      this.refreshQueue();
+    } catch (error) {
+      console.error('重试下载失败:', error);
+    }
   },
 
-  // 从队列中移除
-  removeFromQueue(repoInfo: RepoInfo): void {
-    downloadStore.update(state => ({
-      ...state,
-      queuedDownloads: state.queuedDownloads.filter(
-        repo => !(repo.owner === repoInfo.owner && 
-                 repo.repo === repoInfo.repo && 
-                 repo.path === repoInfo.path)
-      )
-    }));
+  // 清空队列
+  async clearQueue(): Promise<void> {
+    try {
+      await browser.runtime.sendMessage({ type: 'CLEAR_QUEUE' });
+      this.refreshQueue();
+    } catch (error) {
+      console.error('清空队列失败:', error);
+    }
   },
 
   // 清除下载历史
@@ -202,10 +148,6 @@ export const download = {
     }
   },
 
-  // 重新下载
-  retryDownload(record: DownloadRecord): void {
-    this.startDownload(record.repoInfo);
-  },
 
   // 清除错误
   clearError(): void {
@@ -271,4 +213,25 @@ export const isDownloading = derived(
 export const recentDownloads = derived(
   downloadStore,
   $download => $download.downloadHistory.slice(0, 5)
+);
+
+// 派生状态：下载队列状态
+export const queueStatus = derived(
+  downloadStore,
+  $download => {
+    const total = $download.queue.length;
+    const pending = $download.queue.filter(item => item.status === 'pending').length;
+    const downloading = $download.queue.filter(item => item.status === 'downloading').length;
+    const completed = $download.queue.filter(item => item.status === 'completed').length;
+    const failed = $download.queue.filter(item => item.status === 'failed').length;
+    const cancelled = $download.queue.filter(item => item.status === 'cancelled').length;
+
+    return { total, pending, downloading, completed, failed, cancelled };
+  }
+);
+
+// 派生状态：队列中的待处理任务
+export const pendingDownloads = derived(
+  downloadStore,
+  $download => $download.queue.filter(item => item.status === 'pending')
 ); 

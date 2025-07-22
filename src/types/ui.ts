@@ -27,7 +27,8 @@ export enum ErrorType {
   DOWNLOAD_FAILED = 'DOWNLOAD_FAILED',
   ZIP_CREATION_FAILED = 'ZIP_CREATION_FAILED',
   STORAGE_ERROR = 'STORAGE_ERROR',
-  PERMISSION_ERROR = 'PERMISSION_ERROR'
+  PERMISSION_ERROR = 'PERMISSION_ERROR',
+  EXTENSION_ERROR = 'EXTENSION_ERROR'
 }
 
 export interface Notification {
@@ -56,4 +57,4 @@ export interface CurrentPageInfo {
   isRepoPage: boolean;
   isFolderPage: boolean;
   repoInfo: RepoInfo | null;
-} 
+}

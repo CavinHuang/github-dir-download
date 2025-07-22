@@ -45,7 +45,7 @@ class GitHubContentScript {
   private analyzeCurrentPage(): void {
     const url = window.location.href;
     const repoInfo = URLUtils.parseGitHubURL(url);
-    
+
     if (repoInfo && this.shouldShowDownloadButton(repoInfo)) {
       this.currentRepoInfo = repoInfo;
       this.injectDownloadButton();
@@ -73,7 +73,17 @@ class GitHubContentScript {
       '/graphs'
     ];
 
-    return !excludePatterns.some(pattern => pathname.includes(pattern));
+    // 检查是否在排除页面
+    if (excludePatterns.some(pattern => pathname.includes(pattern))) {
+      return false;
+    }
+
+    // 检查URL模式：必须是仓库根目录或树形文件夹页面
+    const isRepoRoot = /^\/[^\/]+\/[^\/]+\/?$/.test(pathname);
+    const isTreeView = /^\/[^\/]+\/[^\/]+\/tree\//.test(pathname);
+    const isBlobView = /^\/[^\/]+\/[^\/]+\/blob\//.test(pathname); // 单文件页面不显示按钮
+
+    return (isRepoRoot || isTreeView) && !isBlobView;
   }
 
   private async injectDownloadButton(): Promise<void> {
@@ -84,7 +94,7 @@ class GitHubContentScript {
     // 等待目标容器出现
     const targetSelector = this.getButtonTargetSelector();
     const targetContainer = await DOMUtils.waitForElement(targetSelector, 10000);
-    
+
     if (!targetContainer) {
       console.log('GitHub Dir Download: 找不到按钮注入位置，尝试备用方案');
       // 尝试备用方案：直接在页面主容器中创建
@@ -111,7 +121,7 @@ class GitHubContentScript {
       // 新版GitHub目录页面的工具栏
       '.react-code-view-header-element--wide .d-flex.gap-2',
       '.CodeViewHeader-module__Box_7--FZfkg .d-flex.gap-2',
-      // 文件列表页面的工具栏  
+      // 文件列表页面的工具栏
       '[data-testid="breadcrumbs"] + div .d-flex',
       // 仓库主页的工具栏
       '.repository-content .Box-header .d-flex',
@@ -134,20 +144,20 @@ class GitHubContentScript {
 
   private getButtonText(): string {
     if (!this.currentRepoInfo) return '下载文件夹';
-    
+
     if (this.currentRepoInfo.path) {
       const pathParts = this.currentRepoInfo.path.split('/');
       const folderName = pathParts[pathParts.length - 1];
       return `下载 ${folderName}`;
     }
-    
+
     return '下载仓库';
   }
 
   private insertButtonIntoContainer(container: Element, button: HTMLElement): void {
     // 查找现有的按钮容器
     const existingButtonContainer = container.classList.contains('d-flex') ? container : container.querySelector('.d-flex');
-    
+
     if (existingButtonContainer) {
       // 在现有按钮组的开头插入
       if (existingButtonContainer.firstChild) {
@@ -181,11 +191,18 @@ class GitHubContentScript {
     }
 
     console.log('GitHub Dir Download: 开始下载请求', this.currentRepoInfo);
-    
+    console.log('GitHub Dir Download: 当前页面URL:', window.location.href);
+    console.log('GitHub Dir Download: 当前页面路径:', window.location.pathname);
+
     // 更新按钮状态为分析中
     this.updateButtonState('analyzing');
 
     try {
+      // 检查扩展上下文是否有效
+      if (!this.isExtensionContextValid()) {
+        throw new Error('扩展上下文失效，请刷新页面重试');
+      }
+
       // 发送下载请求到background script
       const response = await browser.runtime.sendMessage({
         type: 'START_DOWNLOAD',
@@ -207,11 +224,84 @@ class GitHubContentScript {
       }
     } catch (error) {
       console.error('GitHub Dir Download: 下载请求失败', error);
+      console.error('GitHub Dir Download: 错误堆栈:', error instanceof Error ? error.stack : '无堆栈信息');
+
+      // 检查是否是扩展上下文失效错误
       const errorMsg = error instanceof Error ? error.message : '通信失败';
+      if (errorMsg.includes('Extension context invalidated') || errorMsg.includes('message port closed')) {
+        console.error('GitHub Dir Download: 扩展上下文失效，需要刷新页面');
+        this.showContextInvalidatedError();
+        return;
+      }
+
       console.error('GitHub Dir Download: 详细错误信息', errorMsg);
+
+      // 显示更详细的错误信息到页面
+      const fullErrorMsg = `下载失败: ${errorMsg}${error instanceof Error && error.stack ? '\n' + error.stack.slice(0, 200) : ''}`;
       this.updateButtonState('error');
-      this.showErrorTooltip(errorMsg);
-      setTimeout(() => this.updateButtonState('ready'), 3000);
+      this.showErrorTooltip(fullErrorMsg);
+      setTimeout(() => this.updateButtonState('ready'), 5000); // 增加显示时间
+    }
+  }
+
+  /**
+   * 检查扩展上下文是否有效
+   */
+  private isExtensionContextValid(): boolean {
+    try {
+      // 检查 runtime 对象是否存在
+      if (!browser.runtime || !browser.runtime.sendMessage) {
+        return false;
+      }
+
+      // 检查扩展ID是否还有效
+      if (!browser.runtime.id) {
+        return false;
+      }
+
+      return true;
+    } catch (error) {
+      console.error('扩展上下文检查失败:', error);
+      return false;
+    }
+  }
+
+  /**
+   * 显示扩展上下文失效的错误提示
+   */
+  private showContextInvalidatedError(): void {
+    this.updateButtonState('error');
+
+    // 创建一个更明显的错误提示
+    const errorMessage = '扩展已重新加载，请刷新页面后重试';
+    this.showErrorTooltip(errorMessage);
+
+    // 修改按钮文本提示用户刷新
+    if (this.downloadButton) {
+      const originalText = this.downloadButton.textContent;
+      this.downloadButton.textContent = '请刷新页面';
+      this.downloadButton.style.backgroundColor = '#d73a49';
+      this.downloadButton.style.color = 'white';
+
+      // 点击按钮时刷新页面
+      const refreshHandler = () => {
+        window.location.reload();
+      };
+
+      this.downloadButton.removeEventListener('click', this.handleDownloadClick.bind(this));
+      this.downloadButton.addEventListener('click', refreshHandler);
+
+      // 10秒后恢复原状态（如果用户没有刷新的话）
+      setTimeout(() => {
+        if (this.downloadButton) {
+          this.downloadButton.textContent = originalText;
+          this.downloadButton.style.backgroundColor = '';
+          this.downloadButton.style.color = '';
+          this.downloadButton.removeEventListener('click', refreshHandler);
+          this.downloadButton.addEventListener('click', this.handleDownloadClick.bind(this));
+          this.updateButtonState('ready');
+        }
+      }, 10000);
     }
   }
 
@@ -272,7 +362,7 @@ class GitHubContentScript {
 
       mutations.forEach((mutation) => {
         // 检查是否是导航变化
-        if (mutation.type === 'childList' && 
+        if (mutation.type === 'childList' &&
             mutation.target === document.body ||
             (mutation.target as Element).matches?.('[data-turbo-body]')) {
           shouldReanalyze = true;
@@ -309,14 +399,14 @@ class GitHubContentScript {
         transition: all 0.2s ease !important;
         margin-left: 0.5rem !important;
       }
-      
+
       .github-dir-download-btn:hover {
         background: #1a7f37 !important;
         border-color: #1a7f37 !important;
         color: white !important;
         text-decoration: none !important;
       }
-      
+
       .github-dir-download-btn:disabled,
       .github-dir-download-btn.disabled {
         background: #8c959f !important;
@@ -325,22 +415,22 @@ class GitHubContentScript {
         cursor: not-allowed !important;
         opacity: 0.6 !important;
       }
-      
+
       .github-dir-download-btn.analyzing {
         background: #0969da !important;
         border-color: #0969da !important;
       }
-      
+
       .github-dir-download-btn.downloading {
         background: #6f42c1 !important;
         border-color: #6f42c1 !important;
       }
-      
+
       .github-dir-download-btn.error {
         background: #d1242f !important;
         border-color: #d1242f !important;
       }
-      
+
       .github-dir-download-btn .loading-spinner {
         width: 0.875rem !important;
         height: 0.875rem !important;
@@ -349,7 +439,7 @@ class GitHubContentScript {
         border-radius: 50% !important;
         animation: github-dir-download-spin 1s linear infinite !important;
       }
-      
+
       @keyframes github-dir-download-spin {
         to { transform: rotate(360deg); }
       }
@@ -359,7 +449,7 @@ class GitHubContentScript {
     const styleElement = document.createElement('style');
     styleElement.id = 'github-dir-download-styles';
     styleElement.textContent = styles;
-    
+
     // 避免重复注入
     if (!document.getElementById('github-dir-download-styles')) {
       document.head.appendChild(styleElement);
@@ -393,7 +483,7 @@ class GitHubContentScript {
   private getCurrentPageInfo(): CurrentPageInfo {
     const url = window.location.href;
     const pathname = window.location.pathname;
-    
+
     return {
       url,
       pathname,
@@ -410,7 +500,7 @@ class GitHubContentScript {
       this.getButtonText(),
       this.handleDownloadClick.bind(this)
     );
-    
+
     floatingButton.style.cssText = `
       position: fixed !important;
       top: 100px !important;
@@ -428,11 +518,11 @@ class GitHubContentScript {
       align-items: center !important;
       gap: 8px !important;
     `;
-    
+
     document.body.appendChild(floatingButton);
     this.downloadButton = floatingButton;
     this.isInjected = true;
-    
+
     console.log('GitHub Dir Download: 使用悬浮按钮方案');
   }
 
@@ -442,9 +532,9 @@ class GitHubContentScript {
       this.pageObserver.disconnect();
       this.pageObserver = null;
     }
-    
+
     this.removeDownloadButton();
-    
+
     // 移除注入的样式
     const styleElement = document.getElementById('github-dir-download-styles');
     if (styleElement) {
@@ -471,4 +561,4 @@ window.addEventListener('beforeunload', () => {
     contentScript.destroy();
     contentScript = null;
   }
-}); 
+});
