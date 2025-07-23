@@ -1,25 +1,48 @@
 {
   "name": "github-dir-download",
-  "private": true,
   "version": "1.0.0",
-  "type": "module",
+  "description": "一键从GitHub仓库下载指定文件夹，自动打包为ZIP文件",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "check": "svelte-check --tsconfig ./tsconfig.json"
+    "build": "npm run clean && npm run build:zip",
+    "build:zip": "node scripts/build-universal.js",
+    "clean": "rimraf dist",
+    "dev": "node scripts/dev-server.js",
+    "test": "echo \"No tests specified\" && exit 0",
+    "lint": "echo \"No linting configured\" && exit 0",
+    "release": "node scripts/release.js",
+    "prepare-release": "node scripts/prepare-release.js",
+    "icons": "node scripts/generate-icons.js",
+    "icons:generate": "npm run icons"
   },
+  "keywords": [
+    "github",
+    "download",
+    "folder",
+    "zip",
+    "chrome-extension",
+    "firefox-addon",
+    "browser-extension"
+  ],
+  "author": "GitHub Dir Download Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/github-dir-download/extension.git"
+  },
+  "bugs": {
+    "url": "https://github.com/github-dir-download/extension/issues"
+  },
+  "homepage": "https://github.com/github-dir-download/extension#readme",
   "devDependencies": {
-    "@sveltejs/vite-plugin-svelte": "^4.0.0",
-    "@tsconfig/svelte": "^5.0.4",
-    "@types/jszip": "^3.4.1",
-    "@types/webextension-polyfill": "^0.10.0",
-    "jszip": "^3.10.1",
-    "svelte": "^5.0.0",
-    "svelte-check": "^4.0.0",
-    "tslib": "^2.6.3",
-    "typescript": "~5.6.3",
-    "vite": "^5.4.4",
-    "vite-plugin-web-extension": "^4.1.6",
-    "webextension-polyfill": "^0.10.0"
+    "archiver": "^6.0.1",
+    "crx3": "^1.1.3",
+    "fs-extra": "^11.1.1",
+    "rimraf": "^5.0.5"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "dependencies": {
+    "sharp": "^0.34.3"
   }
 }
