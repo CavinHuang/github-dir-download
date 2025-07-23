@@ -8,7 +8,10 @@
       "Bash(rm:*)",
       "Bash(grep:*)",
       "Bash(rg:*)",
-      "Bash(claude mcp add:*)"
+      "Bash(claude mcp add:*)",
+      "Bash(mkdir:*)",
+      "Bash(mv:*)",
+      "Bash(node:*)"
     ],
     "deny": []
   }

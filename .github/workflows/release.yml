@@ -1,0 +1,121 @@
+name: Build and Release Extension
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      discussions: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Get version from tag or input
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "version_number=${VERSION#v}" >> $GITHUB_OUTPUT
+
+      - name: Update manifest version
+        run: |
+          VERSION_NUMBER="${{ steps.version.outputs.version_number }}"
+          sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION_NUMBER\"/" src/manifest.json
+          echo "Updated manifest.json to version $VERSION_NUMBER"
+
+      - name: Build universal ZIP
+        run: npm run build:zip
+
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          python3 scripts/generate-release-notes.py "${{ steps.version.outputs.version }}" > release_notes.md
+          echo "Release notes generated"
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          release_name: GitHub文件夹下载器 ${{ steps.version.outputs.version }}
+          body_path: release_notes.md
+          draft: false
+          prerelease: false
+
+      # - name: Upload Chrome CRX
+      #   uses: actions/upload-release-asset@v1
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      #   with:
+      #     upload_url: ${{ steps.create_release.outputs.upload_url }}
+      #     asset_path: ./dist/github-dir-download-chrome.crx
+      #     asset_name: github-dir-download-${{ steps.version.outputs.version_number }}-chrome.crx
+      #     asset_content_type: application/x-chrome-extension
+
+      # - name: Upload Firefox XPI
+      #   uses: actions/upload-release-asset@v1
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      #   with:
+      #     upload_url: ${{ steps.create_release.outputs.upload_url }}
+      #     asset_path: ./dist/github-dir-download-firefox.xpi
+      #     asset_name: github-dir-download-${{ steps.version.outputs.version_number }}-firefox.xpi
+      #     asset_content_type: application/x-xpinstall
+
+      - name: Upload Universal ZIP
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./dist/github-dir-download-universal.zip
+          asset_name: github-dir-download-${{ steps.version.outputs.version_number }}-universal.zip
+          asset_content_type: application/zip
+
+      - name: Upload Source Code
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./dist/github-dir-download-source.zip
+          asset_name: github-dir-download-${{ steps.version.outputs.version_number }}-source.zip
+          asset_content_type: application/zip
+
+      - name: Post-release notification
+        run: |
+          echo "🎉 Release ${{ steps.version.outputs.version }} created successfully!"
+          echo "📦 Assets uploaded:"
+          # echo "  - Chrome CRX: github-dir-download-${{ steps.version.outputs.version_number }}-chrome.crx"
+          # echo "  - Firefox XPI: github-dir-download-${{ steps.version.outputs.version_number }}-firefox.xpi"
+          echo "  - Universal ZIP: github-dir-download-${{ steps.version.outputs.version_number }}-universal.zip"
+          echo "  - Source Code: github-dir-download-${{ steps.version.outputs.version_number }}-source.zip"

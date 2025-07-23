@@ -1,0 +1,142 @@
+name: Auto Release on Schedule
+
+on:
+  schedule:
+    # 每周日晚上检查是否需要发布新版本
+    - cron: '0 20 * * 0'
+  workflow_dispatch:
+    inputs:
+      force_release:
+        description: 'Force create release even if no significant changes'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  check-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      discussions: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Check for changes since last release
+        id: check_changes
+        run: |
+          # 获取最新tag
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          
+          if [ -z "$LATEST_TAG" ]; then
+            echo "No previous tags found, will create initial release"
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            echo "change_type=initial" >> $GITHUB_OUTPUT
+            echo "next_version=v1.0.0" >> $GITHUB_OUTPUT
+          else
+            echo "Latest tag: $LATEST_TAG"
+            
+            # 检查自上次tag以来的提交
+            COMMITS_SINCE_TAG=$(git rev-list $LATEST_TAG..HEAD --count)
+            echo "Commits since last tag: $COMMITS_SINCE_TAG"
+            
+            if [ "$COMMITS_SINCE_TAG" -gt "0" ]; then
+              # 分析提交类型
+              COMMIT_MESSAGES=$(git log $LATEST_TAG..HEAD --pretty=format:"%s" | tr '[:upper:]' '[:lower:]')
+              
+              if echo "$COMMIT_MESSAGES" | grep -E "(break|breaking|major)" > /dev/null; then
+                echo "has_changes=true" >> $GITHUB_OUTPUT
+                echo "change_type=major" >> $GITHUB_OUTPUT
+                CURRENT_VERSION=${LATEST_TAG#v}
+                MAJOR=$(echo $CURRENT_VERSION | cut -d. -f1)
+                NEW_MAJOR=$((MAJOR + 1))
+                echo "next_version=v${NEW_MAJOR}.0.0" >> $GITHUB_OUTPUT
+              elif echo "$COMMIT_MESSAGES" | grep -E "(feat|feature|add|new)" > /dev/null; then
+                echo "has_changes=true" >> $GITHUB_OUTPUT
+                echo "change_type=minor" >> $GITHUB_OUTPUT
+                CURRENT_VERSION=${LATEST_TAG#v}
+                MAJOR=$(echo $CURRENT_VERSION | cut -d. -f1)
+                MINOR=$(echo $CURRENT_VERSION | cut -d. -f2)
+                NEW_MINOR=$((MINOR + 1))
+                echo "next_version=v${MAJOR}.${NEW_MINOR}.0" >> $GITHUB_OUTPUT
+              elif echo "$COMMIT_MESSAGES" | grep -E "(fix|bug|patch|hotfix)" > /dev/null; then
+                echo "has_changes=true" >> $GITHUB_OUTPUT
+                echo "change_type=patch" >> $GITHUB_OUTPUT
+                CURRENT_VERSION=${LATEST_TAG#v}
+                MAJOR=$(echo $CURRENT_VERSION | cut -d. -f1)
+                MINOR=$(echo $CURRENT_VERSION | cut -d. -f2)
+                PATCH=$(echo $CURRENT_VERSION | cut -d. -f3)
+                NEW_PATCH=$((PATCH + 1))
+                echo "next_version=v${MAJOR}.${MINOR}.${NEW_PATCH}" >> $GITHUB_OUTPUT
+              elif [ "${{ github.event.inputs.force_release }}" = "true" ]; then
+                echo "has_changes=true" >> $GITHUB_OUTPUT
+                echo "change_type=patch" >> $GITHUB_OUTPUT
+                CURRENT_VERSION=${LATEST_TAG#v}
+                MAJOR=$(echo $CURRENT_VERSION | cut -d. -f1)
+                MINOR=$(echo $CURRENT_VERSION | cut -d. -f2)
+                PATCH=$(echo $CURRENT_VERSION | cut -d. -f3)
+                NEW_PATCH=$((PATCH + 1))
+                echo "next_version=v${MAJOR}.${MINOR}.${NEW_PATCH}" >> $GITHUB_OUTPUT
+              else
+                echo "has_changes=false" >> $GITHUB_OUTPUT
+                echo "No significant changes found"
+              fi
+            else
+              echo "has_changes=false" >> $GITHUB_OUTPUT
+              echo "No commits since last tag"
+            fi
+          fi
+
+      - name: Update version and create tag
+        if: steps.check_changes.outputs.has_changes == 'true'
+        run: |
+          NEW_VERSION="${{ steps.check_changes.outputs.next_version }}"
+          VERSION_NUMBER="${NEW_VERSION#v}"
+          
+          echo "Creating release for version: $NEW_VERSION"
+          
+          # 更新package.json版本
+          sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION_NUMBER\"/" package.json
+          
+          # 更新manifest.json版本
+          sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION_NUMBER\"/" src/manifest.json
+          
+          # 配置git用户
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # 提交版本更新
+          git add package.json src/manifest.json
+          git commit -m "chore: bump version to $VERSION_NUMBER"
+          
+          # 创建tag
+          git tag -a "$NEW_VERSION" -m "Auto release $NEW_VERSION"
+          
+          # 推送到远程
+          git push origin main
+          git push origin "$NEW_VERSION"
+
+      - name: Trigger release workflow
+        if: steps.check_changes.outputs.has_changes == 'true'
+        run: |
+          echo "🎉 Version ${{ steps.check_changes.outputs.next_version }} tagged successfully!"
+          echo "Release workflow will be triggered automatically."
+
+      - name: No release needed
+        if: steps.check_changes.outputs.has_changes == 'false'
+        run: |
+          echo "ℹ️  No significant changes detected since last release."
+          echo "Skipping release creation."
