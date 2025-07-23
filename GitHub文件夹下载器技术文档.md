@@ -2,7 +2,7 @@
 
 ## 项目概述
 
-GitZip for GitHub 是一个Chrome浏览器扩展，允许用户从GitHub仓库中选择性下载文件夹和文件，并将其打包为ZIP文件。该扩展通过在GitHub页面注入内容脚本，提供便捷的文件选择和下载功能。
+ for GitHub 是一个Chrome浏览器扩展，允许用户从GitHub仓库中选择性下载文件夹和文件，并将其打包为ZIP文件。该扩展通过在GitHub页面注入内容脚本，提供便捷的文件选择和下载功能。
 
 ## 技术架构
 
@@ -11,7 +11,7 @@ GitZip for GitHub 是一个Chrome浏览器扩展，允许用户从GitHub仓库�
 ```json
 {
   "manifest_version": 3,
-  "name": "GitZip for github",
+  "name": " for github",
   "version": "1.0.4",
   "permissions": ["storage", "contextMenus"],
   "host_permissions": ["https://api.github.com/*"],
@@ -79,8 +79,8 @@ function resolveUrl(repoUrl) {
 ```javascript
 function createMark(parent, height, title, type, href) {
   // 根据选择模式创建不同的标记元素
-  // - 复选框模式：创建 div.gitzip-check-wrap 包含 input[type="checkbox"]
-  // - 双击模式：创建 p.gitzip-check-mark 显示勾选标记
+  // - 复选框模式：创建 div.-check-wrap 包含 input[type="checkbox"]
+  // - 双击模式：创建 p.-check-mark 显示勾选标记
 }
 ```
 

@@ -46,7 +46,6 @@ class DevServer {
       const manifestPath = path.join(this.devDir, 'manifest.json');
       const manifest = await fs.readJson(manifestPath);
       manifest.name += ' (Development)';
-      manifest.version += '-dev';
       await fs.writeJson(manifestPath, manifest, { spaces: 2 });
       
       console.log('✅ Development build completed');

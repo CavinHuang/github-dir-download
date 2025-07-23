@@ -50,10 +50,39 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
-// 监听标签页更新，启用GitHub页面的图标
+// 监听标签页更新，处理GitHub页面的导航变化
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (changeInfo.status === 'complete' && tab.url && tab.url.includes('github.com')) {
+  if (tab.url && tab.url.includes('github.com')) {
+    // 启用图标
     chrome.action.enable(tabId);
+    
+    // 如果URL发生变化，通知content script
+    if (changeInfo.url) {
+      console.log('Background: GitHub页面URL变化', changeInfo.url);
+      // 延迟发送消息，确保content script已加载
+      setTimeout(() => {
+        chrome.tabs.sendMessage(tabId, {
+          type: 'URL_CHANGED',
+          url: changeInfo.url
+        }).catch(error => {
+          // 忽略错误，可能是content script还未加载
+          console.log('Background: 发送URL变化消息失败', error.message);
+        });
+      }, 100);
+    }
+    
+    // 当页面加载完成时也发送通知
+    if (changeInfo.status === 'complete') {
+      console.log('Background: GitHub页面加载完成');
+      setTimeout(() => {
+        chrome.tabs.sendMessage(tabId, {
+          type: 'PAGE_LOADED',
+          url: tab.url
+        }).catch(error => {
+          console.log('Background: 发送页面加载消息失败', error.message);
+        });
+      }, 200);
+    }
   }
 });
 

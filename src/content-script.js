@@ -2,9 +2,29 @@
 
 let downloadButton = null;
 let currentRepoInfo = null;
+let lastUrl = window.location.href; // 全局变量用于URL检测
+let currentPath;
+
+// 保存原始的history方法
+const originalPushState = history.pushState;
+const originalReplaceState = history.replaceState;
+
+// 重写history方法来监听SPA导航
+history.pushState = function() {
+  originalPushState.apply(history, arguments);
+  console.log('GitHub Dir Download: pushState调用');
+  window.dispatchEvent(new Event('locationchange'));
+};
+
+history.replaceState = function() {
+  originalReplaceState.apply(history, arguments);
+  console.log('GitHub Dir Download: replaceState调用');
+  window.dispatchEvent(new Event('locationchange'));
+};
 
 // 初始化
-if (isGitHubPage()) {
+if (window.location.hostname === 'github.com') {
+  console.log('GitHub Dir Download: 开始初始化');
   init();
 }
 
@@ -19,14 +39,17 @@ function init() {
   // 监听background消息
   chrome.runtime.onMessage.addListener(handleMessage);
   
-  // 监听页面变化（GitHub SPA导航）
+  // 主要依赖background的tabs API进行URL监听
+  // 监听自定义locationchange事件（由history API重写触发）
   window.addEventListener('locationchange', () => {
-    setTimeout(onPageReady, 500);
+    console.log('GitHub Dir Download: locationchange事件');
+    setTimeout(onPageReady, 200);
   });
   
-  // 监听popstate事件（后退/前进）
+  // 监听popstate事件（浏览器前进/后退）
   window.addEventListener('popstate', () => {
-    setTimeout(onPageReady, 500);
+    console.log('GitHub Dir Download: popstate事件');
+    setTimeout(onPageReady, 200);
   });
   
   // 启动MutationObserver监听页面变化
@@ -48,10 +71,18 @@ function onPageReady() {
 function analyzeCurrentPage() {
   const url = window.location.href;
   const repoInfo = parseGitHubURL(url);
+
+  const shouldShow = shouldShowDownloadButton()
+  console.log('shouldShow', shouldShow);  
   
-  if (repoInfo && shouldShowDownloadButton()) {
+  if (repoInfo && shouldShow) {
     currentRepoInfo = repoInfo;
+    if(currentPath !== repoInfo.path) {
+      currentPath = repoInfo.path;
+      removeDownloadButton();
+    }
     injectDownloadButton();
+    currentPath = repoInfo.path;
   } else {
     currentRepoInfo = null;
     removeDownloadButton();
@@ -67,8 +98,9 @@ function parseGitHubURL(url) {
   return { owner, repo, branch, path };
 }
 
-function shouldShowDownloadButton() {
+function  shouldShowDownloadButton() {
   const pathname = window.location.pathname;
+  console.log('shouldShowDownloadButton', pathname);
   
   // 排除的页面
   const excludePatterns = [
@@ -79,24 +111,35 @@ function shouldShowDownloadButton() {
   if (excludePatterns.some(pattern => pathname.includes(pattern))) {
     return false;
   }
+
+  console.log('页面可以路径校验通过', pathname);
   
   // 只在仓库根目录或树形文件夹页面显示
   const isRepoRoot = /^\/[^\/]+\/[^\/]+\/?$/.test(pathname);
   const isTreeView = /^\/[^\/]+\/[^\/]+\/tree\//.test(pathname);
   const isBlobView = /^\/[^\/]+\/[^\/]+\/blob\//.test(pathname);
+
+  console.log('isRepoRoot', isRepoRoot);
+  console.log('isTreeView', isTreeView);
+  console.log('isBlobView', isBlobView);
   
   return (isRepoRoot || isTreeView) && !isBlobView;
 }
 
 function injectDownloadButton() {
+  console.log('injectDownloadButton', downloadButton, currentRepoInfo);
   if (downloadButton || !currentRepoInfo) return;
   
-  // 寻找注入位置
+  // 寻找注入位置 - 优先使用repository-details-container
   const targetSelectors = [
+    '#repository-details-container',
     '.react-code-view-header-element--wide .d-flex.gap-2',
-    '.file-navigation .d-flex',
-    '.Box-header .d-flex',
-    '[data-testid="breadcrumbs"] + div .d-flex'
+    '.file-navigation .d-flex.gap-2',
+    '.Box-header .d-flex.gap-2',
+    '[data-testid="breadcrumbs"] + div .d-flex',
+    '.UnderlineNav-actions .d-flex',
+    '.repository-content .d-flex.flex-wrap.gap-2',
+    '.js-repo-nav .d-flex'
   ];
   
   let targetContainer = null;
@@ -104,6 +147,8 @@ function injectDownloadButton() {
     targetContainer = document.querySelector(selector);
     if (targetContainer) break;
   }
+
+  console.log('targetContainer', targetContainer);
   
   if (!targetContainer) {
     // 备用方案：创建悬浮按钮
@@ -162,8 +207,8 @@ function getButtonText() {
 function removeDownloadButton() {
   if (downloadButton && downloadButton.parentNode) {
     downloadButton.parentNode.removeChild(downloadButton);
-    downloadButton = null;
   }
+  downloadButton = null;
 }
 
 async function handleDownloadClick() {
@@ -241,15 +286,30 @@ function showError(message) {
 
 function handleMessage(message, sender, sendResponse) {
   switch (message.type) {
+    case 'URL_CHANGED':
+      console.log('GitHub Dir Download: 收到background的URL变化通知', message.url);
+      lastUrl = message.url; // 更新lastUrl避免备用检测重复触发
+      setTimeout(onPageReady, 100);
+      sendResponse({ success: true });
+      break;
+      
+    case 'PAGE_LOADED':
+      console.log('GitHub Dir Download: 收到background的页面加载通知');
+      setTimeout(onPageReady, 100);
+      sendResponse({ success: true });
+      break;
+      
     case 'START_DOWNLOAD_PROCESS':
       // 开始实际的下载处理
       processDownload(message.token, message.repoInfo, message.path);
       sendResponse({ success: true });
       break;
+      
     case 'UPDATE_BUTTON_STATE':
       updateButtonState(message.state);
       sendResponse({ success: true });
       break;
+      
     default:
       sendResponse({ success: false, error: '未知消息类型' });
   }
@@ -355,24 +415,40 @@ function arrayBufferToBase64(buffer) {
 }
 
 function startPageObserver() {
+  // 轻量级MutationObserver作为补充检测
   const observer = new MutationObserver((mutations) => {
-    let shouldReanalyze = false;
+    // 防抖机制，避免频繁触发
+    if (observer.timeout) return;
     
-    mutations.forEach((mutation) => {
-      if (mutation.type === 'childList' && mutation.target === document.body) {
-        shouldReanalyze = true;
+    observer.timeout = setTimeout(() => {
+      observer.timeout = null;
+      
+      // 检查是否有重要DOM变化
+      const hasImportantChange = mutations.some(mutation => 
+        mutation.type === 'childList' && 
+        mutation.addedNodes.length > 0 &&
+        Array.from(mutation.addedNodes).some(node => 
+          node.nodeType === Node.ELEMENT_NODE &&
+          (node.matches('#repo-content-turbo-frame') || 
+           node.matches('.repository-content'))
+        )
+      );
+      
+      if (hasImportantChange) {
+        console.log('GitHub Dir Download: DOM重要变化检测');
+        setTimeout(analyzeCurrentPage, 300);
       }
-    });
-    
-    if (shouldReanalyze) {
-      setTimeout(analyzeCurrentPage, 500);
-    }
+    }, 500);
   });
   
-  observer.observe(document.body, {
+  // 观察主内容区域
+  const targetNode = document.querySelector('.application-main') || document.body;
+  observer.observe(targetNode, {
     childList: true,
-    subtree: true
+    subtree: false
   });
+  
+  console.log('GitHub Dir Download: 轻量级Observer已启动');
 }
 
 function injectStyles() {
@@ -438,18 +514,3 @@ function injectStyles() {
   document.head.appendChild(styleElement);
 }
 
-// 监听自定义locationchange事件（用于SPA导航检测）
-(function() {
-  const originalPushState = history.pushState;
-  const originalReplaceState = history.replaceState;
-  
-  history.pushState = function() {
-    originalPushState.apply(history, arguments);
-    window.dispatchEvent(new Event('locationchange'));
-  };
-  
-  history.replaceState = function() {
-    originalReplaceState.apply(history, arguments);
-    window.dispatchEvent(new Event('locationchange'));
-  };
-})();
